@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+pydantic==2.9.2
+python-dotenv==1.0.1
+httpx==0.27.2
+# psycopg2-binary is only needed if you point DATABASE_URL at Postgres.
+# The app falls back to SQLite automatically, which is fine for the demo.
+# To use Postgres, uncomment the next line:
+# psycopg2-binary==2.9.9
