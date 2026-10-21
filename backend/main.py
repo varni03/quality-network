@@ -20,7 +20,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, case
 from typing import Optional
 
@@ -142,8 +142,8 @@ PUBLIC_EXACT = {"/", "/health"}
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
+    return security.client_ip(request.headers.get("x-forwarded-for"),
+                              request.client.host if request.client else None)
 
 
 def _is_authed(request: Request) -> bool:
@@ -214,6 +214,10 @@ async def login(request: Request):
     password = body.get("password", "")
     ip = _client_ip(request)
 
+    if security.login_locked(ip):
+        security.audit.warning(f"LOGIN LOCKED ip={ip}")
+        raise HTTPException(429, "Too many failed sign-in attempts. Try again later.")
+
     # A registered employee account wins: the server decides the role, so the
     # role buttons on the login screen stop being the source of truth. Falls
     # back to the shared APP_USERNAME/APP_PASSWORD so demo access still works.
@@ -231,6 +235,7 @@ async def login(request: Request):
         } if account else None
 
         if not account and not security.verify_credentials(username, password):
+            security.record_login_failure(ip)
             security.audit.info(f"LOGIN FAILED user={username!r} ip={ip}")
             # A failed sign-in is the single most important thing an audit trail
             # can hold, and stdout logs don't survive a Render restart. This one
@@ -238,6 +243,7 @@ async def login(request: Request):
             audit_log(db, username or "(blank)", "auth.login_failed", "", f"ip={ip}")
             raise HTTPException(401, "Invalid username or password")
 
+        security.clear_login_failures(ip)
         mode = "directory" if account else "shared credential"
         token = security.issue_token(username)
         security.audit.info(
@@ -327,7 +333,7 @@ def list_defects(
     source: str = "uveye",
     limit: int = Query(200, le=1000),
 ):
-    q = db.query(models.Defect)
+    q = db.query(models.Defect).options(selectinload(models.Defect.notes))  # avoids one query per row
     if source and source != "all":
         q = q.filter(models.Defect.source == source)
     if make:

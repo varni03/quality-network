@@ -15,8 +15,9 @@ people). No real company data, credentials or internal system names are included
 - **Quality App workspace:** Today (floor overview), Inspection with body map, Check-in,
   Vehicle 360, Repair queue, My queue (department-first worklist with aging), Holds,
   Sign-Off (bulk), Trends, 510 Report, Admin (users and departments), Audit trail.
-- **Security:** login, role-aware directory accounts (PBKDF2), signed tokens, VIN masking,
-  rate limiting, locked CORS, security headers.
+- **Security:** login, role-aware directory accounts (PBKDF2), HMAC-signed tokens, VIN masking,
+  per-IP rate limiting, failed-login lockout, same-origin CORS by default, security headers, and a
+  production guard that refuses to start on the published default password or signing secret.
 
 ## Run locally
 ```
@@ -38,3 +39,18 @@ Open http://127.0.0.1:8000. Default demo login: `admin` / `changeme-please`
 - `DEMO_WRITES = true` in `frontend/index.html` keeps edits in the browser tab only.
 
 See `DEPLOY.md` for hosting options (includes a Dockerfile).
+
+## Tests
+```
+pip install -r requirements-dev.txt
+pytest --cov=security --cov=database
+```
+48 tests cover token signing and tampering, password checks, the production guard, client-address
+handling behind proxies, rate limiting, login lockout, the auth gate, and the defects and notes API.
+Two regressions are pinned by tests: listing defects used to issue one query per row, and the
+database pool (5 + 10 connections) was smaller than FastAPI's 40 worker threads.
+
+**Measured effect** (300 requests at concurrency 100 on `/api/defects?limit=20`, one uvicorn worker,
+2 vCPU, local SQLite): before, 107 succeeded, 30 returned HTTP 500 (`QueuePool limit reached`) and
+133 timed out, with p50 21.6 s. After, all 300 succeeded at 131.6 req/s with p50 588 ms and p95
+1.76 s. `/api/analytics` and `/api/vehicles` were not affected by the change.
